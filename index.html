@@ -37,7 +37,6 @@
     -webkit-text-size-adjust:100%;
   }
 
-  /* ---------- Вотермарк ---------- */
   .watermark{
     position:fixed;
     top:0;
@@ -61,7 +60,6 @@
 
   header, main, footer{ position:relative; z-index:1; }
 
-  /* ---------- Шапка ---------- */
   .site-header{
     position:sticky;
     top:0;
@@ -121,7 +119,6 @@
     box-shadow:0 0 0 3px rgba(37,99,235,0.14);
   }
 
-  /* ---------- Контейнер ---------- */
   .container{
     width:100%;
     max-width:640px;
@@ -134,7 +131,6 @@
     padding:16px 0 8px;
   }
 
-  /* ---------- Карточки ---------- */
   .card{
     background:var(--card);
     border:1px solid var(--border);
@@ -144,7 +140,6 @@
     box-shadow:0 1px 2px rgba(16,24,40,0.04);
   }
 
-  /* ---------- Кнопки ---------- */
   .btn{
     font:inherit;
     font-size:14px;
@@ -193,7 +188,6 @@
     font-size:13px;
   }
 
-  /* ---------- Форма создания поста ---------- */
   .field{
     display:block;
     width:100%;
@@ -244,7 +238,6 @@
     font-weight:600;
   }
 
-  /* ---------- Пост ---------- */
   .post-head{
     display:flex;
     align-items:center;
@@ -322,7 +315,6 @@
     padding-right:8px;
   }
 
-  /* ---------- Комментарии ---------- */
   .comments{
     display:none;
     margin-top:12px;
@@ -403,7 +395,6 @@
     box-shadow:0 0 0 3px rgba(37,99,235,0.14);
   }
 
-  /* ---------- Пустая лента ---------- */
   .empty{
     text-align:center;
     color:var(--muted);
@@ -411,7 +402,6 @@
     padding:26px 14px;
   }
 
-  /* ---------- Подвал ---------- */
   .site-footer{
     flex:0 0 auto;
     margin-top:18px;
@@ -428,7 +418,6 @@
     letter-spacing:0.01em;
   }
 
-  /* ---------- Мобильная адаптация ---------- */
   @media (max-width:520px){
     .header-inner{ padding:10px 12px; }
     .brand{ font-size:17px; letter-spacing:0.1em; }
@@ -485,25 +474,15 @@
 (function () {
   'use strict';
 
-  /* ==================== Константы ==================== */
-  const STORAGE_KEY = 'vlad_social_posts_v1';
-  const NAME_KEY    = 'vlad_social_name_v1';
+  /* ==================== ВСТАВЬТЕ ВАШ КЛЮЧ НИЖЕ ==================== */
+  const SUPABASE_KEY = 'sb_publishable_HEgOPdG2zlIctLXlgWfe9A_4fFH4AGf';
+  const SUPABASE_URL = 'https://' + 'dhmkrkkvbwfljcrlyfyn' + '.supabase.co';
+
+  const LIKED_KEY    = 'vlad_social_liked_v1';
+  const NAME_KEY     = 'vlad_social_name_v1';
   const DEFAULT_NAME = 'Влад';
   const GUEST_NAME   = 'Гость';
 
-  /* Демо-картинка (встроенная SVG, без внешних запросов) */
-  const DEMO_IMG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360">' +
-    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#60a5fa"/>' +
-    '</linearGradient></defs>' +
-    '<rect width="640" height="360" fill="url(#g)"/>' +
-    '<text x="320" y="200" font-family="Arial, Helvetica, sans-serif" font-size="82" ' +
-    'font-weight="bold" fill="#ffffff" text-anchor="middle" opacity="0.92">VLAD</text>' +
-    '</svg>'
-  );
-
-  /* ==================== DOM ==================== */
   const feedEl       = document.getElementById('feed');
   const postText     = document.getElementById('postText');
   const postImage    = document.getElementById('postImage');
@@ -511,461 +490,10 @@
   const nameInput    = document.getElementById('nameInput');
   const composerHint = document.getElementById('composerHint');
 
-  /* ==================== Состояние ==================== */
+  let sb = null;
   let state = { posts: [] };
-  const openComments = new Set();   // id постов с раскрытыми комментариями
-  const drafts       = new Map();   // id поста -> черновик комментария
-  let hintTimer = null;
+  const openComments = new Set();
+  const drafts       = new Map();
+  let hintTimer      = null;
 
-  /* ==================== Утилиты ==================== */
-  function uid() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  }
-
-  function esc(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function plural(n, one, few, many) {
-    const a = Math.abs(n) % 100;
-    const b = a % 10;
-    if (a > 10 && a < 20) return many;
-    if (b > 1 && b < 5) return few;
-    if (b === 1) return one;
-    return many;
-  }
-
-  function timeAgo(ts) {
-    const diff = Math.floor((Date.now() - Number(ts)) / 1000);
-    if (!isFinite(diff) || diff < 0) return 'только что';
-    if (diff < 60) return 'только что';
-    const m = Math.floor(diff / 60);
-    if (m < 60) return m + ' ' + plural(m, 'минуту', 'минуты', 'минут') + ' назад';
-    const h = Math.floor(m / 60);
-    if (h < 24) return h + ' ' + plural(h, 'час', 'часа', 'часов') + ' назад';
-    const d = Math.floor(h / 24);
-    if (d < 7) return d + ' ' + plural(d, 'день', 'дня', 'дней') + ' назад';
-    try {
-      return new Date(Number(ts)).toLocaleDateString('ru-RU', {
-        day: '2-digit', month: '2-digit', year: 'numeric'
-      });
-    } catch (e) {
-      return '';
-    }
-  }
-
-  function firstLetter(name) {
-    const s = String(name || '').trim();
-    return s ? s.charAt(0) : '?';
-  }
-
-  /* ==================== Имя пользователя ==================== */
-  function currentUser() {
-    const name = (nameInput.value || '').trim();
-    return name || GUEST_NAME;
-  }
-
-  function loadName() {
-    let saved = '';
-    try { saved = localStorage.getItem(NAME_KEY) || ''; } catch (e) { saved = ''; }
-    nameInput.value = saved || DEFAULT_NAME;
-  }
-
-  function saveName() {
-    try { localStorage.setItem(NAME_KEY, nameInput.value); } catch (e) { /* ignore */ }
-  }
-
-  function updateComposerHint() {
-    composerHint.classList.remove('error');
-    composerHint.textContent = 'Публикация от имени: ' + currentUser();
-  }
-
-  function showHint(message, isError) {
-    composerHint.textContent = message;
-    composerHint.classList.toggle('error', !!isError);
-    if (hintTimer) clearTimeout(hintTimer);
-    hintTimer = setTimeout(function () {
-      hintTimer = null;
-      updateComposerHint();
-    }, 3000);
-  }
-
-  /* ==================== Начальные данные ==================== */
-  function createDefaultState() {
-    const now = Date.now();
-    return {
-      posts: [
-        {
-          id: uid(),
-          author: 'Влад',
-          text: 'Привет! Это моя минималистичная соцсеть.\nПиши посты, ставь лайки, оставляй комментарии — всё сохраняется в браузере и не пропадёт после перезагрузки.',
-          image: '',
-          time: now - 42 * 60 * 1000,
-          likes: 3,
-          liked: false,
-          comments: [
-            {
-              id: uid(),
-              author: 'Аня',
-              text: 'Выглядит очень чисто и аккуратно 👍',
-              time: now - 30 * 60 * 1000
-            }
-          ]
-        },
-        {
-          id: uid(),
-          author: 'Аня',
-          text: 'Второй пост для примера. Картинку можно прикрепить, вставив ссылку на изображение в поле под текстом.',
-          image: DEMO_IMG,
-          time: now - 5 * 60 * 60 * 1000,
-          likes: 7,
-          liked: false,
-          comments: []
-        }
-      ]
-    };
-  }
-
-  /* ==================== Хранилище ==================== */
-  function normalizePost(p) {
-    if (!p || typeof p !== 'object') return null;
-    return {
-      id: typeof p.id === 'string' && p.id ? p.id : uid(),
-      author: typeof p.author === 'string' && p.author.trim() ? p.author : GUEST_NAME,
-      text: typeof p.text === 'string' ? p.text : '',
-      image: typeof p.image === 'string' ? p.image : '',
-      time: Number(p.time) || Date.now(),
-      likes: Math.max(0, Number(p.likes) || 0),
-      liked: !!p.liked,
-      comments: (Array.isArray(p.comments) ? p.comments : [])
-        .filter(function (c) { return c && typeof c === 'object'; })
-        .map(function (c) {
-          return {
-            id: typeof c.id === 'string' && c.id ? c.id : uid(),
-            author: typeof c.author === 'string' && c.author.trim() ? c.author : GUEST_NAME,
-            text: typeof c.text === 'string' ? c.text : '',
-            time: Number(c.time) || Date.now()
-          };
-        })
-    };
-  }
-
-  function load() {
-    let raw = null;
-    try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { raw = null; }
-
-    if (!raw) {
-      state = createDefaultState();
-      save();
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.posts)) {
-        state = { posts: parsed.posts.map(normalizePost).filter(Boolean) };
-      } else {
-        state = createDefaultState();
-      }
-    } catch (e) {
-      state = createDefaultState();
-    }
-  }
-
-  function save() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      /* Хранилище недоступно — просто продолжаем работать в памяти */
-    }
-  }
-
-  /* ==================== Разметка поста ==================== */
-  function postHTML(post) {
-    const user      = currentUser();
-    const isOwn     = post.author === user;
-    const isOpen    = openComments.has(post.id);
-    const draft     = drafts.get(post.id) || '';
-    const comments  = post.comments || [];
-    const likeLabel = 'Лайк · ' + post.likes;
-
-    const commentsHTML = comments.length
-      ? comments.map(function (c) {
-          return '' +
-            '<div class="comment">' +
-              '<div class="avatar avatar-sm">' + esc(firstLetter(c.author)) + '</div>' +
-              '<div class="comment-body">' +
-                '<div class="comment-top">' +
-                  '<span class="comment-author">' + esc(c.author) + '</span>' +
-                  '<span class="comment-time">' + esc(timeAgo(c.time)) + '</span>' +
-                '</div>' +
-                '<div class="comment-text">' + esc(c.text) + '</div>' +
-              '</div>' +
-            '</div>';
-        }).join('')
-      : '<div class="no-comments">Комментариев пока нет. Будь первым!</div>';
-
-    return '' +
-      '<article class="card post" data-id="' + esc(post.id) + '">' +
-
-        '<div class="post-head">' +
-          '<div class="avatar">' + esc(firstLetter(post.author)) + '</div>' +
-          '<div class="post-meta">' +
-            '<div class="post-author">' + esc(post.author) + '</div>' +
-            '<div class="post-time">' + esc(timeAgo(post.time)) + '</div>' +
-          '</div>' +
-          (isOwn
-            ? '<button class="btn btn-danger btn-sm" type="button" data-action="delete">Удалить</button>'
-            : '') +
-        '</div>' +
-
-        (post.text ? '<div class="post-text">' + esc(post.text) + '</div>' : '') +
-
-        (post.image
-          ? '<img class="post-image" src="' + esc(post.image) + '" alt="Изображение к посту" ' +
-            'loading="lazy" onerror="this.style.display=\'none\'">'
-          : '') +
-
-        '<div class="post-actions">' +
-          '<button class="btn btn-like' + (post.liked ? ' active' : '') + '" type="button" data-action="like">' +
-            (post.liked ? '♥ ' : '') + likeLabel +
-          '</button>' +
-          '<button class="btn" type="button" data-action="toggle-comments">Комментарии · ' + comments.length + '</button>' +
-        '</div>' +
-
-        '<div class="comments' + (isOpen ? ' open' : '') + '">' +
-          '<div class="comments-list">' + commentsHTML + '</div>' +
-          '<form class="comment-form" autocomplete="off">' +
-            '<div class="avatar avatar-sm">' + esc(firstLetter(user)) + '</div>' +
-            '<input class="comment-input" type="text" maxlength="500" ' +
-              'placeholder="Написать комментарий..." value="' + esc(draft) + '">' +
-            '<button class="btn btn-primary" type="submit">Отправить</button>' +
-          '</form>' +
-        '</div>' +
-
-      '</article>';
-  }
-
-  /* ==================== Рендер ленты ==================== */
-  function renderFeed() {
-    if (!state.posts.length) {
-      feedEl.innerHTML = '<div class="card empty">Пока нет постов. Напиши первый!</div>';
-      return;
-    }
-
-    let html = '';
-    for (let i = 0; i < state.posts.length; i++) {
-      html += postHTML(state.posts[i]);
-    }
-    feedEl.innerHTML = html;
-  }
-
-  /* ==================== Действия ==================== */
-  function findPost(id) {
-    for (let i = 0; i < state.posts.length; i++) {
-      if (state.posts[i].id === id) return state.posts[i];
-    }
-    return null;
-  }
-
-  function handleLike(post) {
-    if (post.liked) {
-      post.likes = Math.max(0, post.likes - 1);
-      post.liked = false;
-    } else {
-      post.likes += 1;
-      post.liked = true;
-    }
-    save();
-    renderFeed();
-  }
-
-  function handleToggleComments(postId) {
-    if (openComments.has(postId)) {
-      openComments.delete(postId);
-    } else {
-      openComments.add(postId);
-    }
-    renderFeed();
-
-    if (openComments.has(postId)) {
-      const el = feedEl.querySelector('.post[data-id="' + postId + '"] .comment-input');
-      if (el && window.innerWidth > 520) {
-        el.focus({ preventScroll: true });
-      }
-    }
-  }
-
-  function handleDelete(post) {
-    if (post.author !== currentUser()) return;
-    if (!window.confirm('Удалить этот пост?')) return;
-
-    state.posts = state.posts.filter(function (p) { return p.id !== post.id; });
-    openComments.delete(post.id);
-    drafts.delete(post.id);
-    save();
-    renderFeed();
-  }
-
-  function handleAddComment(formEl) {
-    const postEl = formEl.closest('.post');
-    if (!postEl) return;
-
-    const postId = postEl.dataset.id;
-    const input  = formEl.querySelector('.comment-input');
-    if (!input) return;
-
-    const text = (input.value || '').trim();
-    if (!text) {
-      input.focus();
-      return;
-    }
-
-    const post = findPost(postId);
-    if (!post) return;
-
-    post.comments.push({
-      id: uid(),
-      author: currentUser(),
-      text: text,
-      time: Date.now()
-    });
-
-    drafts.delete(postId);
-    openComments.add(postId);
-    save();
-    renderFeed();
-
-    const newInput = feedEl.querySelector('.post[data-id="' + postId + '"] .comment-input');
-    if (newInput && window.innerWidth > 520) {
-      newInput.focus({ preventScroll: true });
-    }
-  }
-
-  /* ==================== Создание поста ==================== */
-  function publishPost() {
-    const text  = (postText.value || '').trim();
-    const image = (postImage.value || '').trim();
-
-    if (!text && !image) {
-      showHint('Напишите текст или добавьте ссылку на картинку.', true);
-      postText.focus();
-      return;
-    }
-
-    state.posts.unshift({
-      id: uid(),
-      author: currentUser(),
-      text: text,
-      image: image,
-      time: Date.now(),
-      likes: 0,
-      liked: false,
-      comments: []
-    });
-
-    save();
-    renderFeed();
-
-    postText.value = '';
-    postImage.value = '';
-    updateComposerHint();
-
-    if (window.innerWidth > 520) {
-      postText.focus({ preventScroll: true });
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  /* ==================== События ==================== */
-  feedEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-
-    const postEl = btn.closest('.post');
-    if (!postEl) return;
-
-    const post = findPost(postEl.dataset.id);
-    if (!post) return;
-
-    const action = btn.dataset.action;
-
-    if (action === 'like') {
-      handleLike(post);
-    } else if (action === 'toggle-comments') {
-      handleToggleComments(post.id);
-    } else if (action === 'delete') {
-      handleDelete(post);
-    }
-  });
-
-  feedEl.addEventListener('submit', function (e) {
-    const form = e.target.closest('.comment-form');
-    if (!form) return;
-    e.preventDefault();
-    handleAddComment(form);
-  });
-
-  feedEl.addEventListener('input', function (e) {
-    const input = e.target.closest('.comment-input');
-    if (!input) return;
-    const postEl = input.closest('.post');
-    if (!postEl) return;
-    drafts.set(postEl.dataset.id, input.value);
-  });
-
-  feedEl.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter') return;
-    const input = e.target.closest('.comment-input');
-    if (!input) return;
-    e.preventDefault();
-    const form = input.closest('.comment-form');
-    if (form) {
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-      } else {
-        handleAddComment(form);
-      }
-    }
-  });
-
-  publishBtn.addEventListener('click', publishPost);
-
-  postText.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      publishPost();
-    }
-  });
-
-  nameInput.addEventListener('input', function () {
-    saveName();
-    updateComposerHint();
-    renderFeed();
-  });
-
-  /* ==================== Автообновление времени ==================== */
-  setInterval(function () {
-    const active = document.activeElement;
-    if (active && (feedEl.contains(active) || active === postText || active === postImage)) {
-      return; // не мешаем пользователю вводить текст
-    }
-    renderFeed();
-  }, 60000);
-
-  /* ==================== Старт ==================== */
-  loadName();
-  load();
-  updateComposerHint();
-  renderFeed();
-
-})();
-</script>
-
-</body>
-</html>
+  function getLikedSet() {
