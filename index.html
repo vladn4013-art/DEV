@@ -497,3 +497,320 @@
   let hintTimer      = null;
 
   function getLikedSet() {
+
+        try { return new Set(JSON.parse(localStorage.getItem(LIKED_KEY) || '[]')); }
+    catch (e) { return new Set(); }
+  }
+  function saveLikedSet(set) {
+    try { localStorage.setItem(LIKED_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b > 1 && b < 5) return few;
+    if (b === 1) return one;
+    return many;
+  }
+  function timeAgo(ts) {
+    const diff = Math.floor((Date.now() - Number(ts)) / 1000);
+    if (!isFinite(diff) || diff < 60) return 'только что';
+    const m = Math.floor(diff / 60);
+    if (m < 60) return m + ' ' + plural(m, 'минуту', 'минуты', 'минут') + ' назад';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + ' ' + plural(h, 'час', 'часа', 'часов') + ' назад';
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + ' ' + plural(d, 'день', 'дня', 'дней') + ' назад';
+    return new Date(Number(ts)).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+  function firstLetter(name) {
+    const s = String(name || '').trim();
+    return s ? s.charAt(0) : '?';
+  }
+
+  function currentUser() {
+    return (nameInput.value || '').trim() || GUEST_NAME;
+  }
+  function loadName() {
+    try { nameInput.value = localStorage.getItem(NAME_KEY) || DEFAULT_NAME; }
+    catch (e) { nameInput.value = DEFAULT_NAME; }
+  }
+  function saveName() {
+    try { localStorage.setItem(NAME_KEY, nameInput.value); } catch (e) {}
+  }
+  function updateComposerHint() {
+    composerHint.classList.remove('error');
+    composerHint.textContent = 'Публикация от имени: ' + currentUser();
+  }
+  function showHint(message, isError) {
+    composerHint.textContent = message;
+    composerHint.classList.toggle('error', !!isError);
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(function () { hintTimer = null; updateComposerHint(); }, 3000);
+  }
+
+  async function loadPosts() {
+    if (!sb) return;
+    const { data, error } = await sb
+      .from('posts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      feedEl.innerHTML = '<div class="card empty">Ошибка базы: ' + esc(error.message) + '</div>';
+      return;
+    }
+
+    const likedSet = getLikedSet();
+    state.posts = (data || []).map(function (row) {
+      const idStr = String(row.id);
+      return {
+        id: idStr,
+        rawId: row.id,
+        author: row.author || GUEST_NAME,
+        text: row.content || '',
+        image: row.image || '',
+        time: new Date(row.created_at).getTime() || Date.now(),
+        likes: Number(row.likes) || 0,
+        liked: likedSet.has(idStr),
+        comments: Array.isArray(row.comments) ? row.comments : []
+      };
+    });
+    renderFeed();
+  }
+
+  function postHTML(post) {
+    const user      = currentUser();
+    const isOwn     = post.author === user;
+    const isOpen    = openComments.has(post.id);
+    const draft     = drafts.get(post.id) || '';
+    const comments  = post.comments || [];
+
+    const commentsHTML = comments.length
+      ? comments.map(function (c) {
+          return '<div class="comment">' +
+            '<div class="avatar avatar-sm">' + esc(firstLetter(c.author)) + '</div>' +
+            '<div class="comment-body">' +
+              '<div class="comment-top">' +
+                '<span class="comment-author">' + esc(c.author) + '</span>' +
+                '<span class="comment-time">' + esc(timeAgo(c.time)) + '</span>' +
+              '</div>' +
+              '<div class="comment-text">' + esc(c.text) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="no-comments">Комментариев пока нет. Будь первым!</div>';
+
+    return '<article class="card post" data-id="' + esc(post.id) + '">' +
+      '<div class="post-head">' +
+        '<div class="avatar">' + esc(firstLetter(post.author)) + '</div>' +
+        '<div class="post-meta">' +
+          '<div class="post-author">' + esc(post.author) + '</div>' +
+          '<div class="post-time">' + esc(timeAgo(post.time)) + '</div>' +
+        '</div>' +
+        (isOwn ? '<button class="btn btn-danger btn-sm" type="button" data-action="delete">Удалить</button>' : '') +
+      '</div>' +
+      (post.text ? '<div class="post-text">' + esc(post.text) + '</div>' : '') +
+      (post.image ? '<img class="post-image" src="' + esc(post.image) + '" alt="Изображение" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+      '<div class="post-actions">' +
+        '<button class="btn btn-like' + (post.liked ? ' active' : '') + '" type="button" data-action="like">' +
+          (post.liked ? '♥ ' : '') + 'Лайк · ' + post.likes +
+        '</button>' +
+        '<button class="btn" type="button" data-action="toggle-comments">Комментарии · ' + comments.length + '</button>' +
+      '</div>' +
+      '<div class="comments' + (isOpen ? ' open' : '') + '">' +
+        '<div class="comments-list">' + commentsHTML + '</div>' +
+        '<form class="comment-form" autocomplete="off">' +
+          '<div class="avatar avatar-sm">' + esc(firstLetter(user)) + '</div>' +
+          '<input class="comment-input" type="text" maxlength="500" placeholder="Написать комментарий..." value="' + esc(draft) + '">' +
+          '<button class="btn btn-primary" type="submit">Отправить</button>' +
+        '</form>' +
+      '</div>' +
+    '</article>';
+  }
+
+  function renderFeed() {
+    if (!state.posts.length) {
+      feedEl.innerHTML = '<div class="card empty">Пока нет постов. Напиши первый!</div>';
+      return;
+    }
+    feedEl.innerHTML = state.posts.map(postHTML).join('');
+  }
+
+  function findPost(id) {
+    return state.posts.find(function (p) { return p.id === id; }) || null;
+  }
+
+  async function handleLike(post) {
+    const likedSet = getLikedSet();
+    if (post.liked) {
+      post.likes = Math.max(0, post.likes - 1);
+      post.liked = false;
+      likedSet.delete(post.id);
+    } else {
+      post.likes += 1;
+      post.liked = true;
+      likedSet.add(post.id);
+    }
+    saveLikedSet(likedSet);
+    renderFeed();
+
+    await sb.from('posts').update({ likes: post.likes }).eq('id', post.rawId);
+  }
+
+  function handleToggleComments(postId) {
+    if (openComments.has(postId)) openComments.delete(postId);
+    else openComments.add(postId);
+    renderFeed();
+  }
+
+  async function handleDelete(post) {
+    if (post.author !== currentUser()) return;
+    if (!window.confirm('Удалить этот пост?')) return;
+
+    const { error } = await sb.from('posts').delete().eq('id', post.rawId);
+    if (error) { alert('Ошибка удаления: ' + error.message); return; }
+
+    state.posts = state.posts.filter(function (p) { return p.id !== post.id; });
+    openComments.delete(post.id);
+    drafts.delete(post.id);
+    renderFeed();
+  }
+
+  async function handleAddComment(formEl) {
+    const postEl = formEl.closest('.post');
+    if (!postEl) return;
+    const postId = postEl.dataset.id;
+    const input  = formEl.querySelector('.comment-input');
+    const text   = (input.value || '').trim();
+    if (!text) { input.focus(); return; }
+
+    const post = findPost(postId);
+    if (!post) return;
+
+    const updatedComments = post.comments.concat([{
+      id: uid(),
+      author: currentUser(),
+      text: text,
+      time: Date.now()
+    }]);
+
+    const { error } = await sb.from('posts').update({ comments: updatedComments }).eq('id', post.rawId);
+    if (error) { alert('Ошибка комментария: ' + error.message); return; }
+
+    post.comments = updatedComments;
+    drafts.delete(postId);
+    openComments.add(postId);
+    renderFeed();
+  }
+
+  async function publishPost() {
+    if (!sb) {
+      showHint('Библиотека Supabase еще загружается...', true);
+      return;
+    }
+    const text  = (postText.value || '').trim();
+    const image = (postImage.value || '').trim();
+
+    if (!text && !image) {
+      showHint('Напишите текст или добавьте ссылку на картинку.', true);
+      postText.focus();
+      return;
+    }
+
+    publishBtn.disabled = true;
+    const { error } = await sb.from('posts').insert([{
+      author: currentUser(),
+      content: text,
+      image: image,
+      likes: 0,
+      comments: []
+    }]);
+    publishBtn.disabled = false;
+
+    if (error) {
+      showHint('Ошибка: ' + error.message, true);
+      return;
+    }
+
+    postText.value = '';
+    postImage.value = '';
+    updateComposerHint();
+    await loadPosts();
+  }
+
+  feedEl.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const postEl = btn.closest('.post');
+    if (!postEl) return;
+    const post = findPost(postEl.dataset.id);
+    if (!post) return;
+
+    if (btn.dataset.action === 'like') handleLike(post);
+    else if (btn.dataset.action === 'toggle-comments') handleToggleComments(post.id);
+    else if (btn.dataset.action === 'delete') handleDelete(post);
+  });
+
+  feedEl.addEventListener('submit', function (e) {
+    const form = e.target.closest('.comment-form');
+    if (!form) return;
+    e.preventDefault();
+    handleAddComment(form);
+  });
+
+  feedEl.addEventListener('input', function (e) {
+    const input = e.target.closest('.comment-input');
+    if (!input) return;
+    const postEl = input.closest('.post');
+    if (postEl) drafts.set(postEl.dataset.id, input.value);
+  });
+
+  publishBtn.addEventListener('click', publishPost);
+
+  postText.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      publishPost();
+    }
+  });
+
+  nameInput.addEventListener('input', function () {
+    saveName();
+    updateComposerHint();
+    renderFeed();
+   }); 
+  loadName();
+  updateComposerHint();
+  feedEl.innerHTML = '<div class="card empty">Загрузка ленты...</div>';
+
+  const sdk = document.createElement('script');
+  sdk.src = 'https://' + 'cdn.jsdelivr.net' + '/npm/@supabase/supabase-js@2';
+  sdk.onload = function () {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    loadPosts();
+  };
+  sdk.onerror = function () {
+    feedEl.innerHTML = '<div class="card empty">Ошибка загрузки SDK.</div>';
+  };
+  document.body.appendChild(sdk);
+
+  setInterval(function () {
+    const active = document.activeElement;
+    if (active && feedEl.contains(active)) return;
+    loadPosts();
+  }, 15000);
+})();
+</script>
+</body>
+</html>
+  
+    
